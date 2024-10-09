@@ -111,9 +111,15 @@ case class VersionSpecificExpressionGen(expressionExtractor: ExpressionExtractor
 
     case UnaryMinus(expressionExtractor(child), false) => Some(f("-", child))
 
+    // numberFormatExpressions.scala
+    case ToNumber(expressionExtractor(left), expressionExtractor(right)) =>
+      Some(f("TO_NUMBER", left, right))
+
     // randomExpression.scala
     // TODO PLAT-5759
-    case Rand(expressionExtractor(child), false) => Some(f("RAND", child))
+    //
+    // Need to match on both true & false that's why we use the wildcard here
+    case Rand(expressionExtractor(child), _) => Some(f("RAND", child))
 
     // Cast.scala
     case Cast(e @ expressionExtractor(child), dataType, _, false) => {
@@ -157,7 +163,15 @@ case class VersionSpecificExpressionGen(expressionExtractor: ExpressionExtractor
       }
     }
 
-    case DateFromUnixDate(expressionExtractor(child)) => Some(f("FROM_UNIXTIME", child))
+    // datetimeExpressions.scala
+
+    case ConvertTimezone(expressionExtractor(sourceTz),
+                         expressionExtractor(targetTz),
+                         expressionExtractor(sourceTs)) =>
+      Some(f("CONVERT_TZ", sourceTs, sourceTz, targetTz))
+
+    case DateFromUnixDate(expressionExtractor(child)) =>
+      Some(f("DATE", f("ADDDATE", Raw("FROM_UNIXTIME(0)"), Raw("INTERVAL") + child + Raw("DAY"))))
     case UnixDate(expressionExtractor(child)) =>
       Some(f("TIMESTAMPDIFF", "DAY", "'1970-01-01'", child))
     case UnixSeconds(expressionExtractor(child)) =>
@@ -221,6 +235,11 @@ case class VersionSpecificExpressionGen(expressionExtractor: ExpressionExtractor
              false) =>
       Some(f("LAG", input, offset))
 
+    case NthValue(expressionExtractor(input),
+                  expressionExtractor(offset),
+                  false) =>
+      Some(f("NTH_VALUE", input, offset))
+
     case BitwiseGet(expressionExtractor(left), expressionExtractor(right)) =>
       Some(op("&", op(">>", left, right), "1"))
 
@@ -242,7 +261,7 @@ case class VersionSpecificExpressionGen(expressionExtractor: ExpressionExtractor
                      expressionExtractor(maxValue),
                      expressionExtractor(numBucket)) => {
       var caseBranches = stringToJoinable("")
-      // when (numBucket <= 0) or (minValue = maxValue)  then null
+      // when (numBucket <= 0) or (minValue = maxValue) then null
       caseBranches += Raw("WHEN") + op(
         "|",
         op("<=", numBucket, IntVar(0)),
@@ -279,14 +298,19 @@ case class VersionSpecificExpressionGen(expressionExtractor: ExpressionExtractor
     case Right(expressionExtractor(str), expressionExtractor(len)) =>
       Some(f("RIGHT", str, len))
 
-    case Round(expressionExtractor(child), expressionExtractor(scale))    => Some(f("ROUND", child, scale))
-    case Unhex(expressionExtractor(child))     => Some(f("UNHEX", child))
+    case Base64(expressionExtractor(child))   => Some(f("TO_BASE64", child))
+    case UnBase64(expressionExtractor(child)) => Some(f("FROM_BASE64", child))
+
+    case Round(expressionExtractor(child), expressionExtractor(scale)) => Some(f("ROUND", child, scale))
+    case Unhex(expressionExtractor(child)) => Some(f("UNHEX", child))
 
     // ----------------------------------
     // Ternary Expressions
     // ----------------------------------
 
     // mathExpressions.scala
+    case Sec(expressionExtractor(child)) => Some(op("/", "1", f("COS", child)))
+
     case Conv(expressionExtractor(numExpr),
               intFoldableExtractor(fromBase),
               intFoldableExtractor(toBase))

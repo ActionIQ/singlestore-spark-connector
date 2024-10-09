@@ -1,7 +1,6 @@
 package com.singlestore.spark
 
 import java.sql.{Date, Timestamp}
-
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -9,11 +8,13 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types._
 import org.slf4j.{Logger, LoggerFactory}
 import com.singlestore.spark.JdbcHelpers.getDMLConnProperties
+import org.apache.spark.sql.execution.SQLPlan
+import org.apache.spark.{DataSourceTelemetryHelpers, SparkContext}
 
 import scala.collection.immutable.HashMap
 import scala.collection.{breakOut, mutable}
 
-object SQLGen extends LazyLogging {
+object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
   type VariableList = List[Var[_]]
 
   trait Joinable {
@@ -155,7 +156,7 @@ object SQLGen extends LazyLogging {
                       VariableList,
                       Boolean,
                       SQLGenContext) => LogicalPlan
-  ) extends SQLChunk {
+  ) extends SQLChunk with SQLPlan {
 
     val isFinal = reader.isFinal
 
@@ -204,7 +205,7 @@ object SQLGen extends LazyLogging {
         reader.schema
       } catch {
         case e: Exception => {
-          log.error(s"Failed to compute schema for reader:\n${reader.toString}")
+          log.error(logFailureTagger(s"Failed to compute schema for reader:\n${reader.toString}"))
           throw e
         }
       }
@@ -533,7 +534,8 @@ object SQLGen extends LazyLogging {
   // normalizedExprIdMap is a map from ExprId to its normalized index
   // It is needed to make generated SQL queries deterministic
   case class SQLGenContext(normalizedExprIdMap: HashMap[ExprId, Int],
-                           singlestoreVersion: SinglestoreVersion) {
+                           singlestoreVersion: SinglestoreVersion,
+                           sparkContext: SparkContext) {
     val aliasGen: Iterator[String] = Iterator.from(1).map(i => s"a$i")
     def nextAlias(): String        = aliasGen.next()
 
@@ -559,7 +561,7 @@ object SQLGen extends LazyLogging {
           SinglestoreVersion(singlestoreVersion.get)
       }
 
-    def apply(root: LogicalPlan, options: SinglestoreOptions): SQLGenContext = {
+    def apply(root: LogicalPlan, options: SinglestoreOptions, sparkContext: SparkContext): SQLGenContext = {
       var normalizedExprIdMap = scala.collection.immutable.HashMap[ExprId, Int]()
       val nextId              = Iterator.from(1)
       root.foreach(plan =>
@@ -569,11 +571,11 @@ object SQLGen extends LazyLogging {
           }
         }))
 
-      new SQLGenContext(normalizedExprIdMap, getSinglestoreVersion(options))
+      new SQLGenContext(normalizedExprIdMap, getSinglestoreVersion(options), sparkContext)
     }
 
-    def apply(options: SinglestoreOptions): SQLGenContext =
-      new SQLGenContext(HashMap.empty, getSinglestoreVersion(options))
+    def apply(options: SinglestoreOptions, sparkContext: SparkContext): SQLGenContext =
+      new SQLGenContext(HashMap.empty, getSinglestoreVersion(options), sparkContext)
   }
 
   case class SinglestoreVersion(major: Int, minor: Int, patch: Int) {
@@ -617,10 +619,13 @@ object SQLGen extends LazyLogging {
         val argStr: String = try {
           arg.asCode
         } catch {
-          case e: NullPointerException =>
+          case _: NullPointerException =>
             s"${arg.prettyName} (failed to convert expression to string)"
         }
-        log.trace(s"Warning: SingleStore SQL pushdown was unable to convert expression: $argStr")
+        context.sparkContext.dataSourceTelemetry.numOfFailedPushDownQueries.getAndIncrement()
+        log.info(
+          logEventNameTagger(s"SingleStore SQL PushDown was unable to convert expression: $argStr")
+        )
       }
 
       out

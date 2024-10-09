@@ -3,12 +3,13 @@ package com.singlestore.spark
 import java.sql.SQLSyntaxErrorException
 
 import com.singlestore.spark.SQLGen.{ExpressionExtractor, SQLGenContext, VariableList}
+import org.apache.spark.DataSourceTelemetryHelpers
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression => CatalystExpression}
 import org.apache.spark.sql.sources.{BaseRelation, CatalystScan, TableScan}
 import org.apache.spark.sql.{Row, SQLContext}
 
-import scala.util.Random;
+import scala.util.Random
 
 case class SinglestoreReaderNoPushdown(query: String,
                                        options: SinglestoreOptions,
@@ -32,7 +33,11 @@ case class SinglestoreReaderNoPushdown(query: String,
           .filter(sf => options.parallelReadRepartitionColumns.contains(sf.name))
           .map(sf => SQLGen.Ident(sf.name).sql),
         sqlContext.sparkContext,
-        randHex
+        randHex,
+        DataSourceTelemetryHelpers.createDataSourceTelemetry(
+          sqlContext.sparkContext,
+          Some("SinglestoreReaderNoPushdown")
+        )
       )
       // Add random hex to the name
       // It is needed to generate unique names for result tables during parallel read
@@ -61,7 +66,8 @@ case class SinglestoreReader(query: String,
     extends BaseRelation
     with LazyLogging
     with TableScan
-    with CatalystScan {
+    with CatalystScan
+    with DataSourceTelemetryHelpers {
 
   override lazy val schema = JdbcHelpers.loadSchema(options, query, variables)
 
@@ -79,7 +85,11 @@ case class SinglestoreReader(query: String,
           .filter(attr => options.parallelReadRepartitionColumns.contains(attr.name))
           .map(attr => context.ident(attr.name, attr.exprId)),
         sqlContext.sparkContext,
-        randHex
+        randHex,
+        DataSourceTelemetryHelpers.createDataSourceTelemetry(
+          sqlContext.sparkContext,
+          Some("SinglestoreReader")
+        )
       )     
       // Add random hex to the name
       // It is needed to generate unique names for result tables during parallel read
@@ -132,21 +142,24 @@ case class SinglestoreReader(query: String,
 
     val newReader = copy(query = stmt.sql, variables = stmt.variables, expectedOutput = stmt.output)
 
-    if (log.isTraceEnabled) {
-      log.trace(s"CatalystScan additional rewrite:\n${newReader}")
-    }
+    log.info(logEventNameTagger(s"CatalystScan additional rewrite:\n$newReader"))
 
     newReader.buildScan
   }
 
   override def toString: String = {
-    val explain =
-      try {
+    val explain = if (log.isTraceEnabled) {
+      val explainStr = try {
         JdbcHelpers.explainQuery(options, query, variables)
       } catch {
         case e: SQLSyntaxErrorException => e.toString
         case e: Exception               => throw e
       }
+      s"""
+         |\nEXPLAIN:
+         |$explainStr
+         """.stripMargin
+    } else { "" }
     val v = variables.map(_.variable).mkString(", ")
 
     s"""
@@ -154,10 +167,7 @@ case class SinglestoreReader(query: String,
       |SingleStore Query
       |Variables: ($v)
       |SQL:
-      |$query
-      |
-      |EXPLAIN:
-      |$explain
+      |${JdbcHelpers.appendTagsToQuery(options, query)}$explain
       |---------------
       """.stripMargin
   }

@@ -19,11 +19,11 @@ import org.apache.spark.sql.jdbc.JdbcDialects
 import org.apache.spark.sql.types.{StringType, StructType}
 
 import scala.util.{Failure, Success, Try}
-import org.apache.spark.SparkContext
+import org.apache.spark.DataSourceTelemetryHelpers
 
 case class SinglestorePartitionInfo(ordinal: Int, name: String, hostport: String)
 
-object JdbcHelpers extends LazyLogging {
+object JdbcHelpers extends LazyLogging with DataSourceTelemetryHelpers {
   final val SINGLESTORE_CONNECT_TIMEOUT = "10000" // 10 seconds in ms
 
   // register the SingleStoreDialect
@@ -131,7 +131,7 @@ object JdbcHelpers extends LazyLogging {
       SinglestoreConnectionPool.getConnection(getDDLConnProperties(conf, isOnExecutor = false))
     try {
       val statement =
-        conn.prepareStatement(SinglestoreDialect.getSchemaQuery(s"($query) AS q"))
+        conn.prepareStatement(appendTagsToQuery(conf, SinglestoreDialect.getSchemaQuery(s"($query) AS q")))
       try {
         fillStatement(statement, variables)
         val rs = statement.executeQuery()
@@ -152,7 +152,7 @@ object JdbcHelpers extends LazyLogging {
     val conn =
       SinglestoreConnectionPool.getConnection(getDDLConnProperties(conf, isOnExecutor = false))
     try {
-      val statement = conn.prepareStatement(s"EXPLAIN $query")
+      val statement = conn.prepareStatement(appendTagsToQuery(conf, s"EXPLAIN $query"))
       try {
         fillStatement(statement, variables)
         val rs = statement.executeQuery()
@@ -179,7 +179,7 @@ object JdbcHelpers extends LazyLogging {
     val conn =
       SinglestoreConnectionPool.getConnection(getDDLConnProperties(conf, isOnExecutor = false))
     try {
-      val statement = conn.prepareStatement(s"EXPLAIN JSON ${query}")
+      val statement = conn.prepareStatement(appendTagsToQuery(conf, s"EXPLAIN JSON $query"))
       try {
         fillStatement(statement, variables)
         val rs = statement.executeQuery()
@@ -206,13 +206,17 @@ object JdbcHelpers extends LazyLogging {
                          database: String): List[SinglestorePartitionInfo] = {
     val conn =
       SinglestoreConnectionPool.getConnection(getDDLConnProperties(conf, isOnExecutor = false))
+    val sql = prepareAndLogSql(
+      conf,
+      s"""
+        |SELECT HOST, PORT
+        |FROM INFORMATION_SCHEMA.DISTRIBUTED_PARTITIONS
+        |WHERE DATABASE_NAME = ? AND ROLE = "Master"
+        |ORDER BY ORDINAL ASC;
+        |""".stripMargin
+    )
     try {
-      val statement = conn.prepareStatement(s"""
-        SELECT HOST, PORT
-        FROM INFORMATION_SCHEMA.DISTRIBUTED_PARTITIONS
-        WHERE DATABASE_NAME = ? AND ROLE = "Master"
-        ORDER BY ORDINAL ASC
-      """)
+      val statement = conn.prepareStatement(sql)
       try {
         fillStatement(statement, List(StringVar(database)))
         val rs = statement.executeQuery()
@@ -245,15 +249,19 @@ object JdbcHelpers extends LazyLogging {
   def externalHostPorts(conf: SinglestoreOptions): Map[String, String] = {
     val conn =
       SinglestoreConnectionPool.getConnection(getDDLConnProperties(conf, isOnExecutor = false))
+    val sql = prepareAndLogSql(
+      conf,
+      s"""
+        |SELECT IP_ADDR,
+        |PORT,
+        |EXTERNAL_HOST,
+        |EXTERNAL_PORT
+        |FROM INFORMATION_SCHEMA.MV_NODES
+        |WHERE TYPE = "LEAF";
+        |""".stripMargin
+    )
     try {
-      val statement = conn.prepareStatement(s"""
-        SELECT IP_ADDR,    
-        PORT,
-        EXTERNAL_HOST,         
-        EXTERNAL_PORT
-        FROM INFORMATION_SCHEMA.MV_NODES 
-        WHERE TYPE = "LEAF";
-      """)
+      val statement = conn.prepareStatement(sql)
       try {
         val rs = statement.executeQuery()
         try {
@@ -356,12 +364,14 @@ object JdbcHelpers extends LazyLogging {
     (fieldsSql ++ keysSql).mkString("(\n  ", ",\n  ", "\n)")
   }
 
-  def tableExists(conn: Connection, table: TableIdentifier): Boolean = {
+  def tableExists(conf: SinglestoreOptions, conn: Connection, table: TableIdentifier): Boolean = {
     conn.withStatement(
       stmt =>
         Try {
           try {
-            stmt.execute(SinglestoreDialect.getTableExistsQuery(table.quotedString))
+            stmt.execute(
+              appendTagsToQuery(conf, SinglestoreDialect.getTableExistsQuery(table.quotedString))
+            )
           } finally {
             stmt.close()
           }
@@ -372,8 +382,7 @@ object JdbcHelpers extends LazyLogging {
   def getSinglestoreVersion(conf: SinglestoreOptions): String = {
     val conn =
       SinglestoreConnectionPool.getConnection(getDDLConnProperties(conf, isOnExecutor = false))
-    val sql = "select @@memsql_version"
-    log.trace(s"Executing SQL:\n$sql")
+    val sql = prepareAndLogSql(conf, "select @@memsql_version")
     val resultSet = conn.withStatement(stmt => {
       try {
         stmt.executeQuery(sql)
@@ -389,22 +398,24 @@ object JdbcHelpers extends LazyLogging {
     } else throw new IllegalArgumentException("Can't get SingleStore version")
   }
 
-  def createTable(conn: Connection,
+  def createTable(conf: SinglestoreOptions,
+                  conn: Connection,
                   table: TableIdentifier,
                   schema: StructType,
                   tableKeys: List[TableKey],
                   createRowstoreTable: Boolean,
                   version: SinglestoreVersion): Unit = {
-    val sql =
+    val sql = prepareAndLogSql(
+      conf,
       s"CREATE ${if (createRowstoreTable && version.atLeast("7.3.0")) "ROWSTORE" else ""} TABLE ${table.quotedString} ${schemaToString(schema, tableKeys, createRowstoreTable)}"
-    log.trace(s"Executing SQL:\n$sql")
+    )
     conn.withStatement(stmt => stmt.executeUpdate(sql))
   }
 
   def getPartitionsCount(conn: Connection, database: String): Int = {
     val sql =
       s"SELECT num_partitions FROM information_schema.DISTRIBUTED_DATABASES WHERE database_name = '$database'"
-    log.trace(s"Executing SQL:\n$sql")
+    log.info(logEventNameTagger(s"Executing SQL:\n$sql"))
     val resultSet = conn.withStatement(stmt => stmt.executeQuery(sql))
 
     if (resultSet.next()) {
@@ -462,7 +473,6 @@ object JdbcHelpers extends LazyLogging {
                                 materialized,
                                 needsRepartition,
                                 repartitionColumns)
-    log.trace(s"Executing SQL:\n$sql")
 
     conn.withPreparedStatement(sql, stmt => {
       JdbcHelpers.fillStatement(stmt, variables)
@@ -472,7 +482,7 @@ object JdbcHelpers extends LazyLogging {
 
   def dropResultTable(conn: Connection, tableName: String): Unit = {
     val sql = s"DROP RESULT TABLE $tableName"
-    log.trace(s"Executing SQL:\n$sql")
+    log.info(logEventNameTagger(s"Executing SQL:\n$sql"))
 
     conn.withStatement(stmt => {
       stmt.executeUpdate(sql)
@@ -481,7 +491,7 @@ object JdbcHelpers extends LazyLogging {
 
   def isValidQuery(conn: Connection, query: String, variables: VariableList): Boolean = {
     val sql = s"EXPLAIN $query"
-    log.trace(s"Executing SQL:\n$sql")
+    log.info(logEventNameTagger(s"Executing SQL:\n$sql"))
 
     Try {
       conn.withPreparedStatement(sql, stmt => {
@@ -500,15 +510,13 @@ object JdbcHelpers extends LazyLogging {
     }
   }
 
-  def truncateTable(conn: Connection, table: TableIdentifier): Unit = {
-    val sql = s"TRUNCATE TABLE ${table.quotedString}"
-    log.trace(s"Executing SQL:\n$sql")
+  def truncateTable(conf: SinglestoreOptions, conn: Connection, table: TableIdentifier): Unit = {
+    val sql = prepareAndLogSql(conf, s"TRUNCATE TABLE ${table.quotedString}")
     conn.withStatement(stmt => stmt.executeUpdate(sql))
   }
 
-  def dropTable(conn: Connection, table: TableIdentifier): Unit = {
-    val sql = s"DROP TABLE ${table.quotedString}"
-    log.trace(s"Executing SQL:\n$sql")
+  def dropTable(conf: SinglestoreOptions, conn: Connection, table: TableIdentifier): Unit = {
+    val sql = prepareAndLogSql(conf, s"DROP TABLE ${table.quotedString}")
     conn.withStatement(stmt => stmt.executeUpdate(sql))
   }
 
@@ -520,8 +528,7 @@ object JdbcHelpers extends LazyLogging {
       table.database
         .orElse(conf.database)
         .getOrElse(throw new IllegalArgumentException("Database name should be defined"))
-    val sql = s"using $databaseName show tables extended like '${table.table}'"
-    log.trace(s"Executing SQL:\n$sql")
+    val sql = prepareAndLogSql(conf, s"using $databaseName show tables extended like '${table.table}'")
     val resultSet = conn.withStatement(stmt => {
       Try {
         try {
@@ -549,15 +556,16 @@ object JdbcHelpers extends LazyLogging {
     val conn =
       SinglestoreConnectionPool.getConnection(getDDLConnProperties(conf, isOnExecutor = false))
     try {
-      if (JdbcHelpers.tableExists(conn, table)) {
+      if (JdbcHelpers.tableExists(conf, conn, table)) {
         mode match {
           case SaveMode.Overwrite =>
             conf.overwriteBehavior match {
               case Truncate =>
-                JdbcHelpers.truncateTable(conn, table)
+                JdbcHelpers.truncateTable(conf, conn, table)
               case DropAndCreate =>
-                JdbcHelpers.dropTable(conn, table)
-                JdbcHelpers.createTable(conn,
+                JdbcHelpers.dropTable(conf, conn, table)
+                JdbcHelpers.createTable(conf,
+                                        conn,
                                         table,
                                         schema,
                                         conf.tableKeys,
@@ -568,14 +576,15 @@ object JdbcHelpers extends LazyLogging {
             }
           case SaveMode.ErrorIfExists =>
             sys.error(
-              s"Table '${table}' already exists. SaveMode: ErrorIfExists."
+              s"Table '$table' already exists. SaveMode: ErrorIfExists."
             )
           case SaveMode.Ignore =>
           // table already exists, nothing to do
           case SaveMode.Append => // continue
         }
       } else {
-        JdbcHelpers.createTable(conn,
+        JdbcHelpers.createTable(conf,
+                                conn,
                                 table,
                                 schema,
                                 conf.tableKeys,
@@ -585,5 +594,28 @@ object JdbcHelpers extends LazyLogging {
     } finally {
       conn.close()
     }
+  }
+
+  private final def prepareAndLogSql(conf: SinglestoreOptions, query: String): String = {
+    val finalQuery = appendTagsToQuery(conf, query)
+    log.info(logEventNameTagger(s"Executing SQL:\n$finalQuery"))
+    finalQuery
+  }
+
+  def appendTagsToQuery(conf: SinglestoreOptions, query: String): String = {
+    val jdbcProps = conf.jdbcExtraOptions
+    val aiqPropsString = jdbcProps.collect {
+      case (k, v) if k.contains("aiq_") =>
+        val regex = ".*aiq_".r
+        regex.replaceAllIn(k, "") + ":" + v
+    }.toSeq.sorted.mkString(",")
+
+    val finalQuery = if (aiqPropsString.nonEmpty) {
+      s"/* $aiqPropsString */\n$query"
+    } else {
+      query
+    }
+
+    finalQuery
   }
 }

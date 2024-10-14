@@ -793,14 +793,14 @@ object ExpressionGen extends LazyLogging with DataSourceTelemetryHelpers {
                         _) =>
         f("TO_TIMESTAMP", left, StringVar(sparkDateFmtToSingleStoreFmtSpecifiers(format)))
       case ParseToTimestamp(e @ expressionExtractor(left), formatOpt, _, _)
-          if e.dataType.isInstanceOf[StringType] =>
+          if e.resolved && e.dataType.isInstanceOf[StringType] =>
         formatOpt match {
           case Some(utf8StringFoldableExtractor(format)) =>
             f("TO_TIMESTAMP", left, StringVar(sparkDateFmtToSingleStoreFmtSpecifiers(format)))
           case None => f("TIMESTAMP", left)
         }
       case ParseToDate(e @ expressionExtractor(left), None, _)
-          if e.dataType.isInstanceOf[StringType] =>
+          if e.resolved && e.dataType.isInstanceOf[StringType] =>
         f("DATE", left)
       case DateFormatClass(expressionExtractor(left),
                            utf8StringFoldableExtractor(right),
@@ -1201,7 +1201,9 @@ object ExpressionGen extends LazyLogging with DataSourceTelemetryHelpers {
 
       case InitCap(expressionExtractor(child)) => f("INITCAP", child)
 
-      case Reverse(e @ expressionExtractor(child)) if e.dataType.isInstanceOf[StringType] => f("REVERSE", child)
+      case Reverse(e @ expressionExtractor(child))
+        if e.resolved && e.dataType.isInstanceOf[StringType] =>
+        f("REVERSE", child)
       // TODO: case SoundEx(expressionExtractor(child)) => ???
 
       // Used by DecimalPrecision to promote the precision of DecimalType and avoid promote multiple times

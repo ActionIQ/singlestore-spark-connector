@@ -46,8 +46,8 @@ class SQLPushdownRule(sparkContext: SparkContext)
     // These Projections are equivalent to 'select `a` as `a#` ...'.
     // If the Warehouse Tables have less than 50-100 Columns that is fine because the final SQL
     // query string is not too long.
-    // Per Dell's Data Model and future Customer's, we need to account for cases where Warehouse
-    // Tables have more than 50-100 Columns (Dell's queries can get to ~130k characters).
+    // Per our Customers Data Models, we need to account for cases where Warehouse
+    // Tables have more than 50-100 Columns (queries can get to ~130k characters).
     // Hence, we comment out the lines below and use fully qualified names for columns in the Plan.
     //
     // Note: We cannot change the following lines without breaking Parallel Read for the Connector

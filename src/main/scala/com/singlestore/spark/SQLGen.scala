@@ -91,13 +91,10 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
         case LeftOuter               => this + "\nLEFT OUTER JOIN" + c
         case RightOuter              => this + "\nRIGHT OUTER JOIN" + c
         case FullOuter               => this + "\nFULL OUTER JOIN" + c
-        // With qualifiers these may create column naming conflicts.
-        // Removing since we are not using them in our Platform and the rest
-        // of the Connectors do not support them either.
-        // case NaturalJoin(Inner)      => this + "\nNATURAL JOIN" + c
-        // case NaturalJoin(LeftOuter)  => this + "\nNATURAL LEFT OUTER JOIN" + c
-        // case NaturalJoin(RightOuter) => this + "\nNATURAL RIGHT OUTER JOIN" + c
-        // case NaturalJoin(FullOuter)  => this + "\nNATURAL FULL OUTER JOIN" + c
+        case NaturalJoin(Inner)      => this + "\nNATURAL JOIN" + c
+        case NaturalJoin(LeftOuter)  => this + "\nNATURAL LEFT OUTER JOIN" + c
+        case NaturalJoin(RightOuter) => this + "\nNATURAL RIGHT OUTER JOIN" + c
+        case NaturalJoin(FullOuter)  => this + "\nNATURAL FULL OUTER JOIN" + c
         case _                       => throw new IllegalArgumentException(s"join type $joinType not supported")
       }
 

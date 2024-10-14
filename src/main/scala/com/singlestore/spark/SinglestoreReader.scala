@@ -79,7 +79,7 @@ case class SinglestoreReader(query: String,
   override def sql: String = {
     val variablesWithIndex = variables.zipWithIndex
     s"""
-      |${variablesWithIndex.map { case (v, idx) => s"declare @var$idx = " + v.variable }.mkString(";\n")}
+      |${variablesWithIndex.map { case (v, idx) => s"declare @var$idx = " + v.variable }.mkString(";\n")};
       |
       |${variablesWithIndex.foldLeft(query) { case (q, (_, idx)) => q.replaceFirst("\\?", s"@var$idx") }}
       """.stripMargin

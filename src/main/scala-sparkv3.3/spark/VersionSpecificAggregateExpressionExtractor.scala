@@ -1,6 +1,6 @@
 package com.singlestore.spark
 
-import com.singlestore.spark.SQLGen.{DoubleVar, ExpressionExtractor, Joinable, SQLGenContext}
+import com.singlestore.spark.SQLGen.{DoubleVar, ExpressionExtractor, SQLGenContext, Statement}
 import com.singlestore.spark.ExpressionGen.{aggregateWithFilter, doubleFoldableExtractor, numberFoldableExtractor, f, op}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{
   AggregateFunction,
@@ -21,7 +21,7 @@ import org.apache.spark.sql.types.NumericType
 case class VersionSpecificAggregateExpressionExtractor(expressionExtractor: ExpressionExtractor,
                                                        context: SQLGenContext,
                                                        filter: Option[SQLGen.Joinable]) {
-  def unapply(aggFunc: AggregateFunction): Option[Joinable] = {
+  def unapply(aggFunc: AggregateFunction): Option[Statement] = {
     aggFunc match {
       // CentralMomentAgg.scala
       case StddevPop(expressionExtractor(child), true) =>

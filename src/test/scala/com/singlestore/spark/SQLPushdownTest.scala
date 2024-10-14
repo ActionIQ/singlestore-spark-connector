@@ -1,5 +1,7 @@
 package com.singlestore.spark
 
+import java.sql.SQLSyntaxErrorException
+
 import com.singlestore.spark.SQLGen.SinglestoreVersion
 import org.apache.spark.sql.types._
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
@@ -1926,9 +1928,13 @@ class SQLPushdownTest extends IntegrationSuiteBase with BeforeAndAfterEach with 
         testSingleReadForReadFromLeaves(
           "select * from users full outer join reviews on users.id = reviews.user_id")
       }
-      ignore("10/2024 | SQLGen.scala -> NaturalJoin - natural join") {
-        testSingleReadForReadFromLeaves(
-          "select users.id, rating from users natural join (select user_id as id, rating from reviews)")
+      it("natural join") {
+        val thrown = intercept[SQLSyntaxErrorException] {
+          testSingleReadForReadFromLeaves(
+            "select users.id, rating from users natural join (select user_id as id, rating from reviews)"
+          )
+        }
+        assert(thrown.getMessage.contains("Duplicate column name"))
       }
       it("complex join") {
         testSingleReadForReadFromLeaves(
@@ -2323,33 +2329,6 @@ class SQLPushdownTest extends IntegrationSuiteBase with BeforeAndAfterEach with 
       it("partial pushdown") {
         testQuery("select not (stringIdentity(id) = '10') from users", expectPartialPushdown = true)
       }
-    }
-  }
-
-  describe("same-name column selection") {
-    it("join two tables which project the same column name") {
-      testOrderedQuery(
-        "select * from (select id from users) as a, (select id from movies) as b where a.id = b.id order by a.id")
-    }
-    ignore("10/2024 | SQLGen.scala -> NaturalJoin - select same columns twice via natural join") {
-      testOrderedQuery("select * from users as a natural join users order by a.id")
-    }
-    it("select same column twice from table") {
-      testQuery("select first_name, first_name from users", expectPartialPushdown = true)
-    }
-    it("select same column twice from table with aliases") {
-      testOrderedQuery("select first_name as a, first_name as a from users order by id")
-    }
-    it("select same alias twice (different column) from table") {
-      testOrderedQuery("select first_name as a, last_name as a from users order by id")
-    }
-    it("select same column twice in subquery") {
-      testQuery("select * from (select first_name, first_name from users) as x",
-                expectPartialPushdown = true)
-    }
-    it("select same column twice from subquery with aliases") {
-      testOrderedQuery(
-        "select * from (select first_name as a, first_name as a from users order by id) as x")
     }
   }
 

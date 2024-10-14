@@ -1,11 +1,11 @@
 package com.singlestore.spark
 
+import java.sql.{Date, SQLSyntaxErrorException}
+
 import com.singlestore.spark.SQLGen.SinglestoreVersion
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.types._
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
-
-import java.sql.Date
 
 class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach with BeforeAndAfterAll {
 
@@ -224,7 +224,7 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
         }
         // singlestore returns [bit_and|bit_or|bit_xor](null) = [0] whereas
         // spark returns [bit_and|bit_or|bit_xor](null) = [null]
-        ignore(s"09/2024 - $n non-nullable column") {
+        ignore(s"10/2024 - $n non-nullable column") {
           bitOperationTest(s"select $n($c) as $n from $t")
         }
         it(s"$n with nullable column") {
@@ -327,16 +327,16 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
     describe("shiftrightunsigned") {
       val f = "shiftrightunsigned"
 
-      ignore(s"09/2024 - $f works with nullable column") {
+      ignore(s"10/2024 - $f works with nullable column") {
         testQuery(s"select $f(id, floor(critic_rating)) as $f from movies")
       }
-      ignore(s"09/2024 - $f with partial pushdown because of udf in the left argument") {
+      ignore(s"10/2024 - $f with partial pushdown because of udf in the left argument") {
         testQuery(
           s"select $f(longIdentity(id), floor(critic_rating)) as $f from movies",
           expectPartialPushdown = true
         )
       }
-      ignore(s"09/2024 - $f with partial pushdown because of udf in the right argument") {
+      ignore(s"10/2024 - $f with partial pushdown because of udf in the right argument") {
         testQuery(
           s"select $f(id, floatIdentity(floor(critic_rating))) as $f from movies",
           expectPartialPushdown = true
@@ -394,16 +394,16 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
 
     for (f <- functionsGroup1) {
       describe(f.capitalize) {
-        ignore(s"09/2024 - ${f.capitalize} works with non-nullable string column") {
+        ignore(s"10/2024 - ${f.capitalize} works with non-nullable string column") {
           testSingleReadForReadFromLeaves(s"select $f(first_name) as $f from users group by id")
         }
-        ignore(s"09/2024 - ${f.capitalize} with partial pushdown because of udf") {
+        ignore(s"10/2024 - ${f.capitalize} with partial pushdown because of udf") {
           testSingleReadQuery(
             s"select $f(stringIdentity(first_name)) as $f from users group by id",
             expectPartialPushdown = true
           )
         }
-        ignore(s"09/2024 - ${f.capitalize} works with filter") {
+        ignore(s"10/2024 - ${f.capitalize} works with filter") {
           testSingleReadForReadFromLeaves(
             s"select $f(first_name) filter (where age % 2 = 0) as $f from users group by id"
           )
@@ -1393,12 +1393,12 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
     describe("ConvertTimezone") {
       val (f, s) = ("ConvertTimezone", "convert_timezone")
 
-      ignore(s"09/2024 - $f works with timestamp non-nullable column") {
+      ignore(s"10/2024 - $f works with timestamp non-nullable column") {
         testQuery(
           s"select $s(created, 'UTC', 'America/Los_Angeles') as ${f.toLowerCase} from reviews"
         )
       }
-      ignore(s"09/2024 - $f works with timestamp non-nullable column and null in second and/or third argument") {
+      ignore(s"10/2024 - $f works with timestamp non-nullable column and null in second and/or third argument") {
         testQuery(
           s"""
             |select
@@ -1409,7 +1409,7 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
             |""".stripMargin.linesIterator.map(_.trim).mkString(" ")
         )
       }
-      ignore(s"09/2024 - $f works with string non-nullable column") {
+      ignore(s"10/2024 - $f works with string non-nullable column") {
         testQuery(
           s"""
             |select
@@ -1419,7 +1419,7 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
         )
       }
       ignore(
-        s"09/2024 - $f works with string non-nullable column and null in second and/or third argument"
+        s"10/2024 - $f works with string non-nullable column and null in second and/or third argument"
       ) {
         testQuery(
           s"""
@@ -1431,12 +1431,12 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
             |""".stripMargin.linesIterator.map(_.trim).mkString(" ")
         )
       }
-      ignore(s"09/2024 - $f works with date non-nullable column") {
+      ignore(s"10/2024 - $f works with date non-nullable column") {
         testQuery(
           s"select $s(birthday, 'UTC', 'America/Los_Angeles') as ${f.toLowerCase} from users"
         )
       }
-      ignore(s"09/2024 - $f works with date non-nullable column and null in second and/or third argument") {
+      ignore(s"10/2024 - $f works with date non-nullable column and null in second and/or third argument") {
         testQuery(
           s"""
             |select
@@ -1447,7 +1447,7 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
             |""".stripMargin.linesIterator.map(_.trim).mkString(" ")
         )
       }
-      ignore(s"09/2024 - $f with partial pushdown because of udf in the first argument") {
+      ignore(s"10/2024 - $f with partial pushdown because of udf in the first argument") {
         testQuery(
           s"""
             |select $s(stringIdentity(birthday), null, 'America/Los_Angeles') as ${f.toLowerCase}
@@ -1456,7 +1456,7 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
           expectPartialPushdown = true
         )
       }
-      ignore(s"09/2024 - $f with partial pushdown because of udf in the second argument") {
+      ignore(s"10/2024 - $f with partial pushdown because of udf in the second argument") {
         testQuery(
           s"""
             |select $s(birthday, stringIdentity('UTC'), 'America/Los_Angeles') as ${f.toLowerCase}
@@ -1465,7 +1465,7 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
           expectPartialPushdown = true
         )
       }
-      ignore(s"09/2024 - $f with partial pushdown because of udf in the third argument") {
+      ignore(s"10/2024 - $f with partial pushdown because of udf in the third argument") {
         testQuery(
           s"""
             |select $s(birthday, 'UTC', stringIdentity('America/Los_Angeles')) as ${f.toLowerCase}
@@ -1749,6 +1749,79 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
           spark.sql(s"select $f(100)*id as $f from (select id from testdb.users order by id)")
         assertApproximateDataFrameEquality(df1, df2, 0.001, orderedComparison = false)
       }
+    }
+  }
+
+  describe("Same-name Column Selection") {
+    it("join two tables which project the same column name") {
+      val thrown = intercept[SQLSyntaxErrorException] {
+        testOrderedQuery(
+          """
+            |select
+            | *
+            |from
+            | (select id from users) as a,
+            | (select id from movies) as b
+            |where a.id = b.id
+            |order by a.id
+            |""".stripMargin.linesIterator.map(_.trim).mkString(" ")
+        )
+      }
+      assert(thrown.getMessage.contains("Duplicate column name"))
+    }
+    it("select same columns twice via natural join") {
+      val thrown = intercept[SQLSyntaxErrorException] {
+        testOrderedQuery("select * from users as a natural join users order by a.id")
+      }
+      assert(thrown.getMessage.contains("Duplicate column name"))
+    }
+    it("select same column twice from table") {
+      testQuery("select first_name, first_name from users", expectPartialPushdown = true)
+    }
+    it("select same column twice from table with aliases") {
+      val thrown = intercept[AnalysisException] {
+        testQuery(
+          "select first_name as a, first_name as a from users",
+          expectPartialPushdown = true
+        )
+      }
+      assert(
+        thrown.getMessage.contains(
+          "Column 'a' does not exist. Did you mean one of the following? [a, a];"
+        )
+      )
+    }
+    it("select same alias twice (different column) from table") {
+      val thrown = intercept[AnalysisException] {
+        testQuery(
+          "select first_name as a, last_name as a from users",
+          expectPartialPushdown = true
+        )
+      }
+      assert(
+        thrown.getMessage.contains(
+          "Column 'a' does not exist. Did you mean one of the following? [a, a];"
+        )
+      )
+    }
+    it("select same column twice in subquery") {
+      testQuery(
+        "select * from (select first_name, first_name from users) as x",
+        expectPartialPushdown = true
+      )
+    }
+    it("select same column twice from subquery with aliases") {
+      val thrown = intercept[AnalysisException] {
+        testQuery(
+          "select * from (select first_name as a, first_name as a from users) as x",
+          expectPartialPushdown = true
+        )
+      }
+      assert(
+        thrown.getMessage.contains(
+          "Column 'a' does not exist. Did you mean one of the following? [x.a, x.a];"
+        )
+      )
     }
   }
 }

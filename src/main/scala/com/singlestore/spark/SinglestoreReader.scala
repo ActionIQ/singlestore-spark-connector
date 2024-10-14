@@ -76,14 +76,14 @@ case class SinglestoreReader(query: String,
 
   override lazy val schema: StructType = JdbcHelpers.loadSchema(options, query, variables)
 
-  override def sql: String =
+  override def sql: String = {
+    val variablesWithIndex = variables.zipWithIndex
     s"""
-      |---------------
-      |SingleStore Query
-      |Variables: (${variables.map(_.variable).mkString(", ")})
-      |SQL:
-      |$query
+      |${variablesWithIndex.map { case (v, idx) => s"declare @var$idx = " + v.variable }.mkString(";\n")}
+      |
+      |${variablesWithIndex.foldLeft(query) { case (q, (_, idx)) => q.replaceFirst("\\?", s"@var$idx") }}
       """.stripMargin
+  }
 
   override def buildScan: RDD[Row] = {
     if (sqlContext.sparkContext.dataSourceTelemetry.checkForPushDownFailures.get()) {

@@ -478,6 +478,16 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
            """.stripMargin.linesIterator.map(_.trim).mkString(" ")
         )
       }
+      it(s"$f works with long non-nullable columns expression in the first argument") {
+        testQuery(
+          s"""
+            |select
+            | $s(id + id, 0.1) as ${f.toLowerCase}1,
+            | $s(id + id, 0.11) as ${f.toLowerCase}2
+            |from users
+            |""".stripMargin.linesIterator.map(_.trim).mkString(" ")
+        )
+      }
       it(s"$f works with long non-nullable column and the first element satisfies small percentages") {
         testQuery(
           s"""

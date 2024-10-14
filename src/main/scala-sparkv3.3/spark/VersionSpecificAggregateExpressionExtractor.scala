@@ -111,9 +111,8 @@ case class VersionSpecificAggregateExpressionExtractor(expressionExtractor: Expr
                                  numberFoldableExtractor(accuracy), _, _)
         // SingleStore supports columns of numeric data type,
         // percentage only from [0, 1] and error_tolerance (`1.0/accuracy`) from (0,0.5]
-        if e.dataType.isInstanceOf[NumericType] &&
-            percentage >= 0.0 && percentage <= 1.0 &&
-              1.0 / accuracy.longValue() > 0.0 && 1.0 / accuracy.longValue() <= 0.5 =>
+        if e.resolved && e.dataType.isInstanceOf[NumericType] && percentage >= 0.0 && percentage <= 1.0 &&
+          1.0 / accuracy.longValue() > 0.0 && 1.0 / accuracy.longValue() <= 0.5 =>
         Some(
           aggregateWithFilter(
             "APPROX_PERCENTILE",

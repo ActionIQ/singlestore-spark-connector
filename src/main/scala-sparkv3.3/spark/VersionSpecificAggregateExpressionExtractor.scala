@@ -1,9 +1,10 @@
 package com.singlestore.spark
 
-import com.singlestore.spark.SQLGen.{ExpressionExtractor, SQLGenContext, Statement}
-import com.singlestore.spark.ExpressionGen.{aggregateWithFilter, f, op}
+import com.singlestore.spark.SQLGen.{DoubleVar, ExpressionExtractor, SQLGenContext, Statement}
+import com.singlestore.spark.ExpressionGen.{aggregateWithFilter, doubleFoldableExtractor, numberFoldableExtractor, f, op}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{
   AggregateFunction,
+  ApproximatePercentile,
   Average,
   First,
   Kurtosis,
@@ -15,6 +16,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.{
   VariancePop,
   VarianceSamp
 }
+import org.apache.spark.sql.types.NumericType
 
 case class VersionSpecificAggregateExpressionExtractor(expressionExtractor: ExpressionExtractor,
                                                        context: SQLGenContext,
@@ -90,12 +92,10 @@ case class VersionSpecificAggregateExpressionExtractor(expressionExtractor: Expr
         )
 
       // First.scala
-      case First(expressionExtractor(child), false) =>
-        Some(aggregateWithFilter("ANY_VALUE", child, filter))
+      // TODO: case First(expressionExtractor(child), false) => Some(aggregateWithFilter("ANY_VALUE", child, filter))
 
       // Last.scala
-      case Last(expressionExtractor(child), false) =>
-        Some(aggregateWithFilter("ANY_VALUE", child, filter))
+      // TODO: case Last(expressionExtractor(child), false) => Some(aggregateWithFilter("ANY_VALUE", child, filter))
 
       // Sum.scala
       case Sum(expressionExtractor(child), false) =>
@@ -104,6 +104,30 @@ case class VersionSpecificAggregateExpressionExtractor(expressionExtractor: Expr
       // Average.scala
       case Average(expressionExtractor(child), false) =>
         Some(aggregateWithFilter("AVG", child, filter))
+
+      // ApproximatePercentile.scala
+      case ApproximatePercentile(e @ expressionExtractor(child),
+                                 doubleFoldableExtractor(percentage),
+                                 numberFoldableExtractor(accuracy), _, _)
+        // SingleStore supports columns of numeric data type,
+        // percentage only from [0, 1] and error_tolerance (`1.0/accuracy`) from (0,0.5]
+        if e.resolved && e.dataType.isInstanceOf[NumericType] && percentage >= 0.0 && percentage <= 1.0 &&
+          1.0 / accuracy.longValue() > 0.0 && 1.0 / accuracy.longValue() <= 0.5 =>
+        Some(
+          aggregateWithFilter(
+            "APPROX_PERCENTILE",
+            child,
+            filter,
+            Seq(
+              DoubleVar(percentage),
+              // SingleStore supports `error_tolerance` which is `1.0/accuracy`
+              //
+              // Need to pass the calculated value here to avoid the following error:
+              // java.sql.SQLException: (conn=<id>) Leaf Error (<ip>): accuracy should be a constant value.
+              DoubleVar(1.0 / accuracy.longValue())
+            )
+          )
+        )
 
       case _ => None
     }

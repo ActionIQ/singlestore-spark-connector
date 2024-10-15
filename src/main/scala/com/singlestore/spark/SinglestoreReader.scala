@@ -1,22 +1,27 @@
 package com.singlestore.spark
 
 import java.sql.SQLSyntaxErrorException
-
 import com.singlestore.spark.SQLGen.{ExpressionExtractor, SQLGenContext, VariableList}
+import org.apache.spark.DataSourceTelemetryHelpers
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression => CatalystExpression}
+import org.apache.spark.sql.execution.SQLPlan
 import org.apache.spark.sql.sources.{BaseRelation, CatalystScan, TableScan}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{Row, SQLContext}
 
-import scala.util.Random;
+import scala.util.Random
 
 case class SinglestoreReaderNoPushdown(query: String,
                                        options: SinglestoreOptions,
                                        @transient val sqlContext: SQLContext)
     extends BaseRelation
-    with TableScan {
+    with TableScan
+    with SQLPlan {
 
   override lazy val schema = JdbcHelpers.loadSchema(options, query, Nil)
+
+  override def sql: String = query
 
   override def buildScan: RDD[Row] = {
     val randHex = Random.nextInt().toHexString
@@ -32,7 +37,11 @@ case class SinglestoreReaderNoPushdown(query: String,
           .filter(sf => options.parallelReadRepartitionColumns.contains(sf.name))
           .map(sf => SQLGen.Ident(sf.name).sql),
         sqlContext.sparkContext,
-        randHex
+        randHex,
+        DataSourceTelemetryHelpers.createDataSourceTelemetry(
+          sqlContext.sparkContext,
+          Some("SinglestoreReaderNoPushdown")
+        )
       )
       // Add random hex to the name
       // It is needed to generate unique names for result tables during parallel read
@@ -61,11 +70,26 @@ case class SinglestoreReader(query: String,
     extends BaseRelation
     with LazyLogging
     with TableScan
-    with CatalystScan {
+    with CatalystScan
+    with SQLPlan
+    with DataSourceTelemetryHelpers  {
 
-  override lazy val schema = JdbcHelpers.loadSchema(options, query, variables)
+  override lazy val schema: StructType = JdbcHelpers.loadSchema(options, query, variables)
+
+  override def sql: String = {
+    val variablesWithIndex = variables.zipWithIndex
+    s"""
+      |${variablesWithIndex.map { case (v, idx) => s"declare @var$idx = " + v.variable }.mkString(";\n")};
+      |
+      |${variablesWithIndex.foldLeft(query) { case (q, (_, idx)) => q.replaceFirst("\\?", s"@var$idx") }}
+      """.stripMargin
+  }
 
   override def buildScan: RDD[Row] = {
+    if (sqlContext.sparkContext.dataSourceTelemetry.checkForPushDownFailures.get()) {
+      sqlContext.sparkContext.dataSourceTelemetry.numOfFailedPushDownQueries.getAndIncrement()
+    }
+
     val randHex = Random.nextInt().toHexString
     val rdd =
       SinglestoreRDD(
@@ -77,9 +101,13 @@ case class SinglestoreReader(query: String,
         resultMustBeSorted,
         expectedOutput
           .filter(attr => options.parallelReadRepartitionColumns.contains(attr.name))
-          .map(attr => context.ident(attr.name, attr.exprId)),
+          .map(attr => context.ident(attr.name, attr.qualifier.headOption)),
         sqlContext.sparkContext,
-        randHex
+        randHex,
+        DataSourceTelemetryHelpers.createDataSourceTelemetry(
+          sqlContext.sparkContext,
+          Some("SinglestoreReader")
+        )
       )     
       // Add random hex to the name
       // It is needed to generate unique names for result tables during parallel read
@@ -113,17 +141,17 @@ case class SinglestoreReader(query: String,
       case (Some(p), Some(f)) =>
         SQLGen
           .select(p)
-          .from(SQLGen.Relation(Nil, this, context.nextAlias(), null))
+          .from(SQLGen.Relation(rawColumns, this, context.nextAlias(), null))
           .where(f)
           .output(rawColumns)
       case (Some(p), None) =>
         SQLGen
           .select(p)
-          .from(SQLGen.Relation(Nil, this, context.nextAlias(), null))
+          .from(SQLGen.Relation(rawColumns, this, context.nextAlias(), null))
           .output(rawColumns)
       case (None, Some(f)) =>
         SQLGen.selectAll
-          .from(SQLGen.Relation(Nil, this, context.nextAlias(), null))
+          .from(SQLGen.Relation(expectedOutput, this, context.nextAlias(), null))
           .where(f)
           .output(expectedOutput)
       case _ =>
@@ -132,21 +160,24 @@ case class SinglestoreReader(query: String,
 
     val newReader = copy(query = stmt.sql, variables = stmt.variables, expectedOutput = stmt.output)
 
-    if (log.isTraceEnabled) {
-      log.trace(s"CatalystScan additional rewrite:\n${newReader}")
-    }
+    log.info(logEventNameTagger(s"CatalystScan additional rewrite:\n$newReader"))
 
     newReader.buildScan
   }
 
   override def toString: String = {
-    val explain =
-      try {
+    val explain = if (log.isTraceEnabled) {
+      val explainStr = try {
         JdbcHelpers.explainQuery(options, query, variables)
       } catch {
         case e: SQLSyntaxErrorException => e.toString
         case e: Exception               => throw e
       }
+      s"""
+         |\nEXPLAIN:
+         |$explainStr
+         """.stripMargin
+    } else { "" }
     val v = variables.map(_.variable).mkString(", ")
 
     s"""
@@ -154,10 +185,7 @@ case class SinglestoreReader(query: String,
       |SingleStore Query
       |Variables: ($v)
       |SQL:
-      |$query
-      |
-      |EXPLAIN:
-      |$explain
+      |$query$explain
       |---------------
       """.stripMargin
   }

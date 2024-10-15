@@ -1,17 +1,21 @@
 package com.singlestore.spark
 
 import com.singlestore.spark.SQLGen.{ExpressionExtractor, SQLGenContext}
+import org.apache.spark.{DataSourceTelemetryHelpers, SparkContext}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 
-class SQLPushdownRule extends Rule[LogicalPlan] {
+class SQLPushdownRule(sparkContext: SparkContext)
+  extends Rule[LogicalPlan]
+    with DataSourceTelemetryHelpers {
+
   override def apply(root: LogicalPlan): LogicalPlan = {
     var context: SQLGenContext = null
     val needsPushdown = root
       .find({
         case SQLGen.Relation(r: SQLGen.Relation) if !r.reader.isFinal =>
-          context = SQLGenContext(root, r.reader.options)
+          context = SQLGenContext(root, r.reader.options, sparkContext)
           true
         case _ => false
       })
@@ -27,7 +31,7 @@ class SQLPushdownRule extends Rule[LogicalPlan] {
 
     // We first need to set a SQLGenContext in every reader.
     // This transform is done to ensure that we will generate the same aliases in the same queries.
-    val normalized = root.transform({
+    var ptr, nextPtr = root.transform({
       case SQLGen.Relation(relation) =>
         relation.toLogicalPlan(
           relation.output,
@@ -38,11 +42,21 @@ class SQLPushdownRule extends Rule[LogicalPlan] {
         )
     })
 
-    // Second, we need to rename the outputs of each SingleStore relation in the tree.  This transform is
+    // In the following lines we used to create Projections with renamed columns for the every query in the Plan.
+    // These Projections are equivalent to 'select `a` as `a#` ...'.
+    // If the Warehouse Tables have less than 50-100 Columns that is fine because the final SQL
+    // query string is not too long.
+    // Per our Customers Data Models, we need to account for cases where Warehouse
+    // Tables have more than 50-100 Columns (queries can get to ~130k characters).
+    // Hence, we comment out the lines below and use fully qualified names for columns in the Plan.
+    //
+    // Note: We cannot change the following lines without breaking Parallel Read for the Connector
+
+    // Second, we need to rename the outputs of each SingleStore relation in the tree. This transform is
     // done to ensure that we can handle projections which involve ambiguous column name references.
-    var ptr, nextPtr = normalized.transform({
-      case SQLGen.Relation(relation) => relation.renameOutput
-    })
+    //    var ptr, nextPtr = normalized.transform({
+    //       case SQLGen.Relation(relation) => relation.renameOutput
+    //    })
 
     val expressionExtractor = ExpressionExtractor(context)
     val transforms =
@@ -65,9 +79,7 @@ class SQLPushdownRule extends Rule[LogicalPlan] {
       case SQLGen.Relation(relation) if !relation.isFinal => relation.castOutputAndFinalize
     })
 
-    if (log.isTraceEnabled) {
-      log.trace(s"Optimized Plan:\n${out.treeString(true)}")
-    }
+    log.info(logEventNameTagger(s"Optimized Plan:\n${out.treeString(true)}"))
 
     out
   }
@@ -81,7 +93,7 @@ object SQLPushdownRule {
 
   def ensureInjected(session: SparkSession): Unit = {
     if (!injected(session)) {
-      session.experimental.extraOptimizations ++= Seq(new SQLPushdownRule)
+      session.experimental.extraOptimizations ++= Seq(new SQLPushdownRule(session.sparkContext))
     }
   }
 

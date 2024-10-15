@@ -9,11 +9,12 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.types._
 import org.slf4j.{Logger, LoggerFactory}
 import com.singlestore.spark.JdbcHelpers.getDMLConnProperties
+import org.apache.spark.{DataSourceTelemetryHelpers, SparkContext}
 
 import scala.collection.immutable.HashMap
 import scala.collection.{breakOut, mutable}
 
-object SQLGen extends LazyLogging {
+object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
   type VariableList = List[Var[_]]
 
   trait Joinable {
@@ -135,15 +136,10 @@ object SQLGen extends LazyLogging {
 
   case class Raw(override val sql: String) extends SQLChunk
 
-  case class Ident(name: String) extends SQLChunk {
-    override val sql: String = SinglestoreDialect.quoteIdentifier(name)
-
-    // it's not clear that we ever need to fully-qualify references since we do field renames with expr-ids
-    // If this changes then you can change this code to something like this:
-    // (and grab the qualifier when creating Ident)
-    //      qualifier
-    //        .map(q => s"${SinglestoreDialect.quoteIdentifier(q)}.")
-    //        .getOrElse("") + SinglestoreDialect.quoteIdentifier(name)
+  case class Ident(name: String, qualifier: Option[String] = None) extends SQLChunk {
+    override val sql: String = qualifier
+      .map(q => s"${SinglestoreDialect.quoteIdentifier(q)}.")
+      .getOrElse("") + SinglestoreDialect.quoteIdentifier(name)
   }
 
   case class Relation(
@@ -160,7 +156,7 @@ object SQLGen extends LazyLogging {
     val isFinal = reader.isFinal
 
     val output = rawOutput.map(
-      a => AttributeReference(a.name, a.dataType, a.nullable, a.metadata)(a.exprId)
+      a => AttributeReference(a.name, a.dataType, a.nullable, a.metadata)(a.exprId, Seq[String](name))
     )
 
     override val sql: String = {
@@ -204,7 +200,7 @@ object SQLGen extends LazyLogging {
         reader.schema
       } catch {
         case e: Exception => {
-          log.error(s"Failed to compute schema for reader:\n${reader.toString}")
+          log.error(logFailureTagger(s"Failed to compute schema for reader:\n${reader.toString}"))
           throw e
         }
       }
@@ -258,7 +254,7 @@ object SQLGen extends LazyLogging {
   case class Attr(a: Attribute, context: SQLGenContext) extends Chunk {
     override def toSQL(fieldMap: Map[ExprId, Attribute]): String = {
       val target = fieldMap.getOrElse(a.exprId, a)
-      context.ident(target.name, target.exprId)
+      context.ident(target.name, target.qualifier.headOption)
     }
   }
 
@@ -293,7 +289,7 @@ object SQLGen extends LazyLogging {
   def block(j: Joinable): Statement = Raw("(") + j + ")"
 
   def alias(j: Joinable, n: String, e: ExprId, context: SQLGenContext): Statement =
-    block(j) + "AS" + context.ident(n, e)
+    block(j) + "AS" + context.ident(n, None)
 
   def func(n: String, j: Joinable): Statement  = Raw(n) + block(j)
   def func(n: String, j: Joinable*): Statement = Raw(n) + block(j.reduce(_ + "," + _))
@@ -533,7 +529,8 @@ object SQLGen extends LazyLogging {
   // normalizedExprIdMap is a map from ExprId to its normalized index
   // It is needed to make generated SQL queries deterministic
   case class SQLGenContext(normalizedExprIdMap: HashMap[ExprId, Int],
-                           singlestoreVersion: SinglestoreVersion) {
+                           singlestoreVersion: SinglestoreVersion,
+                           sparkContext: SparkContext) {
     val aliasGen: Iterator[String] = Iterator.from(1).map(i => s"a$i")
     def nextAlias(): String        = aliasGen.next()
 
@@ -546,6 +543,8 @@ object SQLGen extends LazyLogging {
       } else {
         Ident(s"${name.substring(0, Math.min(name.length, 10))}#${exprId.id}").sql
       }
+
+    def ident(name: String, qualifier: Option[String]): String = Ident(name, qualifier).sql
   }
 
   object SQLGenContext {
@@ -559,7 +558,7 @@ object SQLGen extends LazyLogging {
           SinglestoreVersion(singlestoreVersion.get)
       }
 
-    def apply(root: LogicalPlan, options: SinglestoreOptions): SQLGenContext = {
+    def apply(root: LogicalPlan, options: SinglestoreOptions, sparkContext: SparkContext): SQLGenContext = {
       var normalizedExprIdMap = scala.collection.immutable.HashMap[ExprId, Int]()
       val nextId              = Iterator.from(1)
       root.foreach(plan =>
@@ -569,11 +568,11 @@ object SQLGen extends LazyLogging {
           }
         }))
 
-      new SQLGenContext(normalizedExprIdMap, getSinglestoreVersion(options))
+      new SQLGenContext(normalizedExprIdMap, getSinglestoreVersion(options), sparkContext)
     }
 
-    def apply(options: SinglestoreOptions): SQLGenContext =
-      new SQLGenContext(HashMap.empty, getSinglestoreVersion(options))
+    def apply(options: SinglestoreOptions, sparkContext: SparkContext): SQLGenContext =
+      new SQLGenContext(HashMap.empty, getSinglestoreVersion(options), sparkContext)
   }
 
   case class SinglestoreVersion(major: Int, minor: Int, patch: Int) {
@@ -617,10 +616,13 @@ object SQLGen extends LazyLogging {
         val argStr: String = try {
           arg.asCode
         } catch {
-          case e: NullPointerException =>
+          case _: NullPointerException =>
             s"${arg.prettyName} (failed to convert expression to string)"
         }
-        log.trace(s"Warning: SingleStore SQL pushdown was unable to convert expression: $argStr")
+        context.sparkContext.dataSourceTelemetry.checkForPushDownFailures.set(true)
+        log.info(
+          logEventNameTagger(s"SingleStore SQL PushDown was unable to convert expression: $argStr")
+        )
       }
 
       out
@@ -645,7 +647,9 @@ object SQLGen extends LazyLogging {
         if (args.lengthCompare(1) > 0) {
           val expressionNames = new mutable.HashSet[String]()
           val hasDuplicates = args.exists({
-            case a @ NamedExpression(name, _) => !expressionNames.add(s"${name}#${a.exprId.id}")
+            case a @ NamedExpression(name, _) =>
+              // !expressionNames.add(s"${name}#${a.exprId.id}")
+              !expressionNames.add(context.ident(name, a.qualifier.headOption))
             case _                            => false
           })
           if (hasDuplicates) return None

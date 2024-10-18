@@ -31,7 +31,7 @@ class SQLPushdownRule(sparkContext: SparkContext)
 
     // We first need to set a SQLGenContext in every reader.
     // This transform is done to ensure that we will generate the same aliases in the same queries.
-    var ptr, nextPtr = root.transform({
+    val normalized = root.transform({
       case SQLGen.Relation(relation) =>
         relation.toLogicalPlan(
           relation.output,
@@ -42,21 +42,22 @@ class SQLPushdownRule(sparkContext: SparkContext)
         )
     })
 
-    // In the following lines we used to create Projections with renamed columns for the every query in the Plan.
+    // In the following lines we create Projections with renamed columns for the every query in the Plan.
     // These Projections are equivalent to 'select `a` as `a#` ...'.
     // If the Warehouse Tables have less than 50-100 Columns that is fine because the final SQL
     // query string is not too long.
     // Per our Customers Data Models, we need to account for cases where Warehouse
     // Tables have more than 50-100 Columns (queries can get to ~130k characters).
-    // Hence, we comment out the lines below and use fully qualified names for columns in the Plan.
+    //
+    // https://github.com/memsql/singlestore-spark-connector/issues/93
     //
     // Note: We cannot change the following lines without breaking Parallel Read for the Connector
 
     // Second, we need to rename the outputs of each SingleStore relation in the tree. This transform is
     // done to ensure that we can handle projections which involve ambiguous column name references.
-    //    var ptr, nextPtr = normalized.transform({
-    //       case SQLGen.Relation(relation) => relation.renameOutput
-    //    })
+    var ptr, nextPtr = normalized.transformUp({
+      case SQLGen.Relation(relation) => relation.renameOutput
+    })
 
     val expressionExtractor = ExpressionExtractor(context)
     val transforms =

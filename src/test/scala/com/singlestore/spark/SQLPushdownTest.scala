@@ -2332,6 +2332,33 @@ class SQLPushdownTest extends IntegrationSuiteBase with BeforeAndAfterEach with 
     }
   }
 
+  describe("same-name column selection") {
+    it("join two tables which project the same column name") {
+      testOrderedQuery(
+        "select * from (select id from users) as a, (select id from movies) as b where a.id = b.id order by a.id")
+    }
+    it("select same columns twice via natural join") {
+      testOrderedQuery("select * from users as a natural join users order by a.id")
+    }
+    it("select same column twice from table") {
+      testQuery("select first_name, first_name from users", expectPartialPushdown = true)
+    }
+    it("select same column twice from table with aliases") {
+      testOrderedQuery("select first_name as a, first_name as a from users order by id")
+    }
+    it("select same alias twice (different column) from table") {
+      testOrderedQuery("select first_name as a, last_name as a from users order by id")
+    }
+    it("select same column twice in subquery") {
+      testQuery("select * from (select first_name, first_name from users) as x",
+        expectPartialPushdown = true)
+    }
+    it("select same column twice from subquery with aliases") {
+      testOrderedQuery(
+        "select * from (select first_name as a, first_name as a from users order by id) as x")
+    }
+  }
+
   describe("datetimeExpressions") {
     describe("DateAdd") {
       it("positive num_days") { testQuery("select date_add(birthday, age) from users") }

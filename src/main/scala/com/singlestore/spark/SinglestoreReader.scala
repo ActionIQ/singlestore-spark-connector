@@ -74,7 +74,11 @@ case class SinglestoreReader(query: String,
     with SQLPlan
     with DataSourceTelemetryHelpers  {
 
-  override lazy val schema: StructType = JdbcHelpers.loadSchema(options, query, variables)
+  private def truncatedQuery: String = if (!query.contains("--")) {
+    query.stripMargin.linesIterator.map(_.trim).mkString(" ")
+  } else { query }
+
+  override lazy val schema: StructType = JdbcHelpers.loadSchema(options, truncatedQuery, variables)
 
   override def sql: String = {
     val variablesWithIndex = variables.zipWithIndex
@@ -93,7 +97,7 @@ case class SinglestoreReader(query: String,
     val randHex = Random.nextInt().toHexString
     val rdd =
       SinglestoreRDD(
-        query,
+        truncatedQuery,
         variables,
         options,
         schema,
@@ -101,7 +105,7 @@ case class SinglestoreReader(query: String,
         resultMustBeSorted,
         expectedOutput
           .filter(attr => options.parallelReadRepartitionColumns.contains(attr.name))
-          .map(attr => context.ident(attr.name, attr.qualifier.headOption)),
+          .map(attr => context.ident(attr.name, attr.exprId)),
         sqlContext.sparkContext,
         randHex,
         DataSourceTelemetryHelpers.createDataSourceTelemetry(
@@ -141,17 +145,17 @@ case class SinglestoreReader(query: String,
       case (Some(p), Some(f)) =>
         SQLGen
           .select(p)
-          .from(SQLGen.Relation(rawColumns, this, context.nextAlias(), null))
+          .from(SQLGen.Relation(Nil, this, context.nextAlias(), null))
           .where(f)
           .output(rawColumns)
       case (Some(p), None) =>
         SQLGen
           .select(p)
-          .from(SQLGen.Relation(rawColumns, this, context.nextAlias(), null))
+          .from(SQLGen.Relation(Nil, this, context.nextAlias(), null))
           .output(rawColumns)
       case (None, Some(f)) =>
         SQLGen.selectAll
-          .from(SQLGen.Relation(expectedOutput, this, context.nextAlias(), null))
+          .from(SQLGen.Relation(Nil, this, context.nextAlias(), null))
           .where(f)
           .output(expectedOutput)
       case _ =>

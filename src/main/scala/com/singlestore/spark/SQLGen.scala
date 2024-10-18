@@ -136,10 +136,14 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
 
   case class Raw(override val sql: String) extends SQLChunk
 
-  case class Ident(name: String, qualifier: Option[String] = None) extends SQLChunk {
-    override val sql: String = qualifier
-      .map(q => s"${SinglestoreDialect.quoteIdentifier(q)}.")
-      .getOrElse("") + SinglestoreDialect.quoteIdentifier(name)
+  case class Ident(name: String) extends SQLChunk {
+    override val sql: String = SinglestoreDialect.quoteIdentifier(name)
+    // it's not clear that we ever need to fully-qualify references since we do field renames with expr-ids
+    // If this changes then you can change this code to something like this:
+    // (and grab the qualifier when creating Ident)
+    //      qualifier
+    //        .map(q => s"${SinglestoreDialect.quoteIdentifier(q)}.")
+    //        .getOrElse("") + SinglestoreDialect.quoteIdentifier(name)
   }
 
   case class Relation(
@@ -156,7 +160,7 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
     val isFinal = reader.isFinal
 
     val output = rawOutput.map(
-      a => AttributeReference(a.name, a.dataType, a.nullable, a.metadata)(a.exprId, Seq[String](name))
+      a => AttributeReference(a.name, a.dataType, a.nullable, a.metadata)(a.exprId)
     )
 
     override val sql: String = {
@@ -254,7 +258,7 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
   case class Attr(a: Attribute, context: SQLGenContext) extends Chunk {
     override def toSQL(fieldMap: Map[ExprId, Attribute]): String = {
       val target = fieldMap.getOrElse(a.exprId, a)
-      context.ident(target.name, target.qualifier.headOption)
+      context.ident(target.name, target.exprId)
     }
   }
 
@@ -289,7 +293,7 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
   def block(j: Joinable): Statement = Raw("(") + j + ")"
 
   def alias(j: Joinable, n: String, e: ExprId, context: SQLGenContext): Statement =
-    block(j) + "AS" + context.ident(n, None)
+    block(j) + "AS" + context.ident(n, e)
 
   def func(n: String, j: Joinable): Statement  = Raw(n) + block(j)
   def func(n: String, j: Joinable*): Statement = Raw(n) + block(j.reduce(_ + "," + _))
@@ -539,12 +543,10 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
 
     def ident(name: String, exprId: ExprId): String =
       if (normalizedExprIdMap.contains(exprId)) {
-        Ident(s"${name.substring(0, Math.min(name.length, 10))}#${normalizedExprIdMap(exprId)}").sql
+        Ident(s"c#${normalizedExprIdMap(exprId)}").sql
       } else {
-        Ident(s"${name.substring(0, Math.min(name.length, 10))}#${exprId.id}").sql
+        Ident(s"c#${exprId.id}").sql
       }
-
-    def ident(name: String, qualifier: Option[String]): String = Ident(name, qualifier).sql
   }
 
   object SQLGenContext {
@@ -647,9 +649,7 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
         if (args.lengthCompare(1) > 0) {
           val expressionNames = new mutable.HashSet[String]()
           val hasDuplicates = args.exists({
-            case a @ NamedExpression(name, _) =>
-              // !expressionNames.add(s"${name}#${a.exprId.id}")
-              !expressionNames.add(context.ident(name, a.qualifier.headOption))
+            case a @ NamedExpression(name, _) => !expressionNames.add(s"$name#${a.exprId.id}")
             case _                            => false
           })
           if (hasDuplicates) return None

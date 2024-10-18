@@ -1929,12 +1929,8 @@ class SQLPushdownTest extends IntegrationSuiteBase with BeforeAndAfterEach with 
           "select * from users full outer join reviews on users.id = reviews.user_id")
       }
       it("natural join") {
-        val thrown = intercept[SQLSyntaxErrorException] {
-          testSingleReadForReadFromLeaves(
-            "select users.id, rating from users natural join (select user_id as id, rating from reviews)"
-          )
-        }
-        assert(thrown.getMessage.contains("Duplicate column name"))
+        testSingleReadForReadFromLeaves(
+          "select users.id, rating from users natural join (select user_id as id, rating from reviews)")
       }
       it("complex join") {
         testSingleReadForReadFromLeaves(

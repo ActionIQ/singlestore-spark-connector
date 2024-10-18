@@ -649,7 +649,7 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
         if (args.lengthCompare(1) > 0) {
           val expressionNames = new mutable.HashSet[String]()
           val hasDuplicates = args.exists({
-            case a @ NamedExpression(name, _) => !expressionNames.add(s"$name#${a.exprId.id}")
+            case a @ NamedExpression(name, _) => !expressionNames.add(s"c#${a.exprId.id}")
             case _                            => false
           })
           if (hasDuplicates) return None

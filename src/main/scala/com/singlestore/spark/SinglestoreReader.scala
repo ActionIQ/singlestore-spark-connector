@@ -74,9 +74,12 @@ case class SinglestoreReader(query: String,
     with SQLPlan
     with DataSourceTelemetryHelpers  {
 
-  private def truncatedQuery: String = if (!query.contains("--")) {
-    query.stripMargin.linesIterator.map(_.trim).mkString(" ")
-  } else { query }
+  private def truncatedQuery: String = {
+    // Truncating with one line comments produces not valid SQL
+    if (!log.isTraceEnabled()) {
+      query.stripMargin.linesIterator.map(_.trim).mkString(" ")
+    } else { query }
+  }
 
   override lazy val schema: StructType = JdbcHelpers.loadSchema(options, truncatedQuery, variables)
 

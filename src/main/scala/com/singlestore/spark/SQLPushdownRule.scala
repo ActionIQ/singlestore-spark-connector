@@ -55,7 +55,7 @@ class SQLPushdownRule(sparkContext: SparkContext)
 
     // Second, we need to rename the outputs of each SingleStore relation in the tree. This transform is
     // done to ensure that we can handle projections which involve ambiguous column name references.
-    var ptr, nextPtr = normalized.transformUp({
+    var ptr, nextPtr = normalized.transform({
       case SQLGen.Relation(relation) => relation.renameOutput
     })
 

@@ -102,6 +102,8 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
     def on(c: Option[Joinable]): Statement = c.map(on).getOrElse(this)
 
     def where(c: Joinable): Statement = this + "\nWHERE" + c
+    def where(c: Joinable, isAntiJoin: Boolean): Statement =
+      this + s"\nWHERE${if (isAntiJoin) " NOT " else " "}EXISTS" + c
 
     def groupby(c: Joinable): Statement         = this + "\nGROUP BY" + c
     def groupby(c: Option[Joinable]): Statement = c.map(groupby).getOrElse(this)
@@ -503,6 +505,65 @@ object SQLGen extends LazyLogging with DataSourceTelemetryHelpers {
           .from(left)
           .join(right, joinType)
           .output(plan.output)
+
+      // Intersect and Except Operators are replaced with either semi-join
+      // and anti-join respectively in Spark or union, aggregate
+      case plan @ Join(relationOrSort(left),
+                       relationOrSort(right),
+                       joinType @ (LeftSemi | LeftAnti),
+                       Some(sortPredicates(condition)),
+                       _)
+        if getDMLConnProperties(left.reader.options, isOnExecutor = false) == getDMLConnProperties(
+          right.reader.options,
+          isOnExecutor = false) =>
+
+        val isAntiJoin = joinType match {
+          case LeftSemi => false
+          case LeftAnti => true
+          case _ =>
+            throw new IllegalArgumentException("Expected ONLY `LeftSemi` or `LeftAnti` joinType.")
+        }
+
+        newStatement(plan)
+          .selectAll()
+          .from(left)
+          .where(
+            block(
+              newStatement(plan)
+                .selectAll()
+                .from(right)
+                .where(condition)
+                .output(plan.output)
+            ),
+            isAntiJoin
+          )
+          .output(plan.output)
+
+    // not supporting Union by name OR allowMissingCols or non nullSafeEq or executeAsFullOuter
+    case plan @ Union(children,
+                      byName @ false,
+                      allowMissingCol @ false,
+                      nullSafeEq @ true,
+                      executeAsFullOuter @ false)
+        if children.collect { case relationOrSort(c) =>
+          getDMLConnProperties(c.reader.options, isOnExecutor = false)
+        }.toSet.size == 1 =>
+
+      newStatement(plan)
+        .selectAll()
+        .from(
+          block (
+            children.collect { case p @ relationOrSort(child) =>
+              block (
+                newStatement(p)
+                  .selectAll()
+                  .from(child)
+                  .output(p.output)
+              )
+            }.reduce(_ + "\nUNION ALL\n" + _)
+          )
+        )
+        .output(plan.output)
     }
   }
 

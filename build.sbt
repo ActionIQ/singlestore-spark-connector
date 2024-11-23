@@ -20,7 +20,7 @@ val jacksonDatabindVersion = sparkVersion match {
 }
 
 // increment this version when making a new release
-val sparkConnectorVersion = "4.1.8-aiq"
+val sparkConnectorVersion = "4.1.8-aiq3"
 
 lazy val root = project
   .withId("singlestore-spark-connector")

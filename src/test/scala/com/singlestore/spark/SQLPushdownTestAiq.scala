@@ -1761,4 +1761,71 @@ class SQLPushdownTestAiq extends IntegrationSuiteBase with BeforeAndAfterEach wi
       }
     }
   }
+
+  describe("Set Operations") {
+    describe("Intersect") {
+      val f = "intersect"
+
+      it(s"${f.capitalize} works with full tables") {
+        testQuery("select * from users intersect select * from users_sample")
+      }
+      it(s"${f.capitalize} works with single columns from tables") {
+        testQuery("select id from users intersect select id from users_sample")
+      }
+      it(s"${f.capitalize} with partial pushdown because of udf") {
+        testQuery(
+          s"""
+             |select longIdentity(id) as $f from users
+             |intersect
+             |select longIdentity(id) as $f from users_sample
+             |""".stripMargin.linesIterator.map(_.trim).mkString(" "),
+          expectPartialPushdown = true,
+          expectSingleRead = true
+        )
+      }
+    }
+
+    describe("Except") {
+      val f = "except"
+
+      it(s"${f.capitalize} works with full tables") {
+        testQuery("select * from users except select * from users_sample")
+      }
+      it(s"${f.capitalize} works with single columns from tables") {
+        testQuery("select id from users except select id from users_sample")
+      }
+      it(s"${f.capitalize} with partial pushdown because of udf") {
+        testQuery(
+          s"""
+             |select longIdentity(id) as $f from users
+             |except
+             |select longIdentity(id) as $f from users_sample
+             |""".stripMargin.linesIterator.map(_.trim).mkString(" "),
+          expectPartialPushdown = true,
+          expectSingleRead = true
+        )
+      }
+    }
+
+    describe("Union") {
+      val f = "union"
+
+      it(s"${f.capitalize} works with full tables") {
+        testQuery("select * from users union all select * from users_sample")
+      }
+      it(s"${f.capitalize} works with single columns from tables") {
+        testQuery("select id from users union all select id from users_sample")
+      }
+      it(s"${f.capitalize} with partial pushdown because of udf") {
+        testQuery(
+          s"""
+             |select longIdentity(id) as $f from users
+             |union all
+             |select longIdentity(id) as $f from users_sample
+             |""".stripMargin.linesIterator.map(_.trim).mkString(" "),
+          expectPartialPushdown = true
+        )
+      }
+    }
+  }
 }

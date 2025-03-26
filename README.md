@@ -661,7 +661,7 @@ Happy querying!
 
 ## Setting up development environment
 
- * install Oracle JDK 8 from this url: https://www.oracle.com/java/technologies/javase/javase-jdk8-downloads.html
+ * install JDK 17 from any standard source (example: temurin)
  * install the community edition of Intellij IDEA from https://www.jetbrains.com/idea/
  * clone the repository https://github.com/memsql/singlestore-spark-connector.git
  * in Intellij IDEA choose `Configure->Plugins` and install Scala plugin

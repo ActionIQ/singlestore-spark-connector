@@ -6,9 +6,9 @@ import xerial.sbt.Sonatype._
  */
 
 // update this version when picking up a new Flame release
-val aiqSparkVersion    = "3-3-2-aiq114"
+val aiqSparkVersion = "3-3-2-aiq120"
 
-val sparkVersion       = aiqSparkVersion.substring(0,5).replace("-", ".")
+val sparkVersion       = aiqSparkVersion.substring(0, 5).replace("-", ".")
 val scalaVersionStr    = "2.12.15"
 val scalaVersionPrefix = scalaVersionStr.substring(0, 4)
 val jacksonDatabindVersion = sparkVersion match {
@@ -20,7 +20,7 @@ val jacksonDatabindVersion = sparkVersion match {
 }
 
 // increment this version when making a new release
-val sparkConnectorVersion = "4.1.8-aiq3"
+val sparkConnectorVersion = "4.1.8-aiq4"
 
 lazy val root = project
   .withId("singlestore-spark-connector")
@@ -68,7 +68,7 @@ lazy val root = project
       // runtime dependencies
       "org.apache.spark"       %% "spark-core"             % aiqSparkVersion % "provided, test",
       "org.apache.spark"       %% "spark-sql"              % aiqSparkVersion % "provided, test",
-      "org.apache.avro"        % "avro"                    % "1.11.3",
+      "org.apache.avro"        % "avro"                    % "1.11.4",
       "org.apache.commons"     % "commons-dbcp2"           % "2.7.0",
       "org.scala-lang.modules" %% "scala-java8-compat"     % "0.9.0",
       "com.singlestore"        % "singlestore-jdbc-client" % "1.2.4",

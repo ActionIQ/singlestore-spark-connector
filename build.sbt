@@ -20,7 +20,7 @@ val jacksonDatabindVersion = sparkVersion match {
 }
 
 // increment this version when making a new release
-val sparkConnectorVersion = "4.1.8-aiq4"
+val sparkConnectorVersion = "4.1.8-aiq5"
 
 lazy val root = project
   .withId("singlestore-spark-connector")
@@ -71,7 +71,7 @@ lazy val root = project
       "org.apache.avro"        % "avro"                    % "1.11.4",
       "org.apache.commons"     % "commons-dbcp2"           % "2.7.0",
       "org.scala-lang.modules" %% "scala-java8-compat"     % "0.9.0",
-      "com.singlestore"        % "singlestore-jdbc-client" % "1.2.4",
+      "com.singlestore"        % "singlestore-jdbc-client" % "1.2.7",
       "io.spray"               %% "spray-json"             % "1.3.5",
       "io.netty"               % "netty-buffer"            % "4.1.70.Final",
       "org.apache.commons"     % "commons-dbcp2"           % "2.9.0",

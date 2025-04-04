@@ -6,7 +6,7 @@ import xerial.sbt.Sonatype._
  */
 
 // update this version when picking up a new Flame release
-val aiqSparkVersion = "3-3-2-aiq120"
+val aiqSparkVersion = "3-3-2-aiq121"
 
 val sparkVersion       = aiqSparkVersion.substring(0, 5).replace("-", ".")
 val scalaVersionStr    = "2.12.15"
@@ -20,7 +20,7 @@ val jacksonDatabindVersion = sparkVersion match {
 }
 
 // increment this version when making a new release
-val sparkConnectorVersion = "4.1.8-aiq5"
+val sparkConnectorVersion = "4.1.8-aiq6"
 
 lazy val root = project
   .withId("singlestore-spark-connector")
